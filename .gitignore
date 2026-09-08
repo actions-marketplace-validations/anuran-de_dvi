@@ -23,6 +23,10 @@ htmlcov/
 # and its provenance note.
 !/data/diamonds.parquet
 !/data/README.md
+!/data/adult.parquet
+!/data/online_retail.parquet
+# Local-only prepared datasets (NYC taxi) — generated, never committed.
+/data/local/
 # Raw, oversized real datasets dropped at the repo root for the #15 harness
 # (git-ignored: they are gigabytes; the harness reads them via DuckDB).
 /nyc_taxi_data.csv
