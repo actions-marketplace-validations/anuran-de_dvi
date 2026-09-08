@@ -32,6 +32,11 @@ and real-vs-real specificity", not "validated on real production incidents".
 | online_retail | e-commerce transactions | 60,000 (of 541,909) | returns (negative qty), 25% null CustomerID, price outliers |
 | nyc_taxi | urban mobility (scale) | ≈39.7M full; 200k reservoir sample for experiments (local only) | negative fares, zero-distance trips, garbage timestamps |
 
+> The committed parquet files under `data/` are the source of truth for these
+> numbers, not `scripts/prep_real_datasets.py`. A future polars release could
+> change the written byte layout, but the committed files — and the seed-stable
+> row content the harness reads by column — do not.
+
 ## Results (committed datasets, CI-reproducible)
 
 Positives are **injected** into **real distributions** (real data underneath,
@@ -85,9 +90,11 @@ throughput is measured separately at full scale.
 - Full parquet: 39,717,684 rows (776 MB, git-ignored).
 - Throughput: 135,280,842 rows/s (DuckDB full-parquet scan; avg `fare_amount` ≈ $19.81).
 
-Reproduce: `python scripts/prep_nyc_taxi.py` then `python -m dvi.benchmark.real_eval`
-(with the local file present, the CLI report includes the taxi row; on a clean
-checkout it prints only the 3 committed datasets).
+Reproduce: `python scripts/prep_nyc_taxi.py` then
+`python -m dvi.benchmark.real_eval --include-local`. The `--include-local` flag
+adds any present git-ignored local datasets; without it (the default) — and on a
+clean checkout — the CLI prints only the 3 committed datasets, so the committed
+pooled numbers above are byte-identical whether or not taxi has been prepped.
 
 ## Reproduce the committed-dataset numbers
 
