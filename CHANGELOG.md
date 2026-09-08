@@ -10,6 +10,11 @@ All notable changes to DVI are documented here. Format loosely follows
   changed dbt model files to lineage nodes; `[[changes]]` is now optional and
   is unioned with derived events (#11). Requires `actions/checkout` with
   `fetch-depth: 0`. A run with no declared or derived change now errors.
+- Real-data evaluation harness (`python -m dvi.benchmark.real_eval`): specificity
+  (real-vs-real) and injected-recall across all five detector families over
+  diamonds, adult census, and online-retail, with calibration (ECE/MCE/Brier) on
+  real data and a git-ignored NYC-taxi scale dimension. Methodology and results
+  in `docs/validation.md`; README claims qualified to match.
 
 ## [0.1.0] - 2026-09-04
 
