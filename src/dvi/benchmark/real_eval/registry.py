@@ -108,15 +108,22 @@ def _adult_spec() -> RealDataset:
                 n=2000,
             ),
             InjectionRecipe(
-                "numeric_distribution_shift", "capital.gain",
+                # capital.gain is 0 for ~92% of rows, so a tail-stretch above a
+                # 5000 pivot barely moves the distribution; age is continuous with
+                # ~half its mass above the median, a fair test of the detector.
+                "numeric_distribution_shift", "age",
                 lambda d: inject_distribution_shift(
-                    d, "capital.gain", pivot=5000.0, factor=2.0
+                    d, "age", pivot=37.0, factor=2.0
                 ),
                 n=2000,
             ),
             InjectionRecipe(
-                "unit_scale_shift", "hours.per.week",
-                lambda d: inject_unit_scale(d, "hours.per.week", 100.0), n=2000,
+                # hours.per.week is low-cardinality and tie-heavy, so disjoint
+                # real samples' quantile spreads don't line up and the inferred
+                # scale factor drifts off 100; fnlwgt is high-cardinality
+                # continuous, giving a clean multiplicative signal.
+                "unit_scale_shift", "fnlwgt",
+                lambda d: inject_unit_scale(d, "fnlwgt", 100.0), n=2000,
             ),
         ],
         committed=True,
