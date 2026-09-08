@@ -95,15 +95,21 @@ def _run_dataset(
     return DatasetResult(spec.id, spec.domain, fp, recalls), pairs
 
 
-def run_registry(*, n: int = 1000, trials: int = 30, seed: int = 0) -> RealEvalReport:
-    """Run both experiments over every present dataset; pool the calibration pairs."""
+def run_registry(
+    *, n: int = 1000, trials: int = 30, seed: int = 0, committed_only: bool = False
+) -> RealEvalReport:
+    """Run both experiments over present datasets; pool the calibration pairs.
+
+    committed_only skips local (git-ignored) datasets so CI and the test suite
+    stay deterministic and fast regardless of what a developer has prepped.
+    """
     model = load_model()
     results: list[DatasetResult] = []
     all_pairs: list[Pair] = []
     for spec in build_registry():
-        result, pairs = _run_dataset(
-            spec, n=n, trials=trials, seed=seed, model=model
-        )
+        if committed_only and not spec.committed:
+            continue
+        result, pairs = _run_dataset(spec, n=n, trials=trials, seed=seed, model=model)
         results.append(result)
         all_pairs.extend(pairs)
     reliability = build_reliability_report(all_pairs)

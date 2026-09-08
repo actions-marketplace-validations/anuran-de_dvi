@@ -6,10 +6,12 @@ from dvi.benchmark.real_eval.runner import RealEvalReport, render_report, run_re
 
 def test_runner_produces_sane_pooled_metrics_on_committed_data():
     # Small n/trials keep the test fast but exercise the full path.
-    report = run_registry(n=800, trials=4, seed=0)
+    # committed_only=True keeps CI/tests deterministic and fast regardless of
+    # whether a developer has prepped the git-ignored local taxi dataset.
+    report = run_registry(n=800, trials=4, seed=0, committed_only=True)
     assert isinstance(report, RealEvalReport)
     ids = {d.dataset_id for d in report.datasets}
-    assert {"diamonds", "adult", "online_retail"} <= ids
+    assert {"diamonds", "adult", "online_retail"} == ids
 
     # Specificity: real-vs-real must be quiet on real, unchanged data.
     assert report.pooled_fp_rate <= 0.10
@@ -21,8 +23,8 @@ def test_runner_produces_sane_pooled_metrics_on_committed_data():
 
 
 def test_render_report_is_deterministic_and_labelled():
-    a = render_report(run_registry(n=800, trials=4, seed=0))
-    b = render_report(run_registry(n=800, trials=4, seed=0))
+    a = render_report(run_registry(n=800, trials=4, seed=0, committed_only=True))
+    b = render_report(run_registry(n=800, trials=4, seed=0, committed_only=True))
     assert a == b
     assert "injected-label" in a.lower()
     assert "Reliability" in a

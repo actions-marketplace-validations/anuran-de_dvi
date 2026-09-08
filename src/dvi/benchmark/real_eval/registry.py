@@ -26,6 +26,13 @@ DATA_DIR = Path(__file__).resolve().parents[4] / "data"
 ADULT_PATH = DATA_DIR / "adult.parquet"
 ONLINE_RETAIL_PATH = DATA_DIR / "online_retail.parquet"
 NYC_TAXI_PATH = DATA_DIR / "local" / "nyc_taxi.parquet"
+NYC_TAXI_SAMPLE_ROWS = 200_000
+NYC_TAXI_SAMPLE_SEED = 0
+_NYC_TAXI_COLUMNS = (
+    "VendorID", "tpep_pickup_datetime", "tpep_dropoff_datetime", "passenger_count",
+    "trip_distance", "PULocationID", "DOLocationID", "payment_type", "fare_amount",
+    "tip_amount", "total_amount",
+)
 
 
 @dataclass(frozen=True)
@@ -172,13 +179,39 @@ def _online_retail_spec() -> RealDataset:
     )
 
 
+def _load_nyc_taxi_sample() -> pl.DataFrame:
+    """Deterministic REPEATABLE reservoir sample of the git-ignored full parquet.
+
+    The scale parquet is ~40M rows; the experiments only need a representative
+    sample, and reshuffling the full frame per trial exhausts memory. DuckDB
+    streams a seeded reservoir sample (never materialising the full frame in
+    Python); the full file backs the separate throughput figure. fetchall +
+    pl.DataFrame is used because .pl()/.arrow() require pyarrow, which DVI omits.
+    """
+    import duckdb
+
+    if not NYC_TAXI_PATH.exists():
+        raise FileNotFoundError(NYC_TAXI_PATH)
+    con = duckdb.connect()
+    con.execute("SET enable_progress_bar=false")
+    query = (
+        f"SELECT {', '.join(_NYC_TAXI_COLUMNS)} FROM read_parquet(?) "
+        f"USING SAMPLE reservoir({NYC_TAXI_SAMPLE_ROWS} ROWS) "
+        f"REPEATABLE ({NYC_TAXI_SAMPLE_SEED})"
+    )
+    rel = con.execute(query, [str(NYC_TAXI_PATH)])
+    names = [d[0] for d in rel.description]
+    rows = rel.fetchall()
+    return pl.DataFrame(rows, schema=names, orient="row").with_columns(
+        pl.col("payment_type").cast(pl.Utf8)
+    )
+
+
 def _nyc_taxi_spec() -> RealDataset:
     return RealDataset(
         id="nyc_taxi",
         domain="urban mobility (scale)",
-        load=lambda: pl.read_parquet(NYC_TAXI_PATH).with_columns(
-            pl.col("payment_type").cast(pl.Utf8)
-        ),
+        load=_load_nyc_taxi_sample,
         fp_columns=["payment_type", "trip_distance", "fare_amount", "total_amount"],
         recipes=[
             InjectionRecipe(
