@@ -38,6 +38,14 @@ def test_build_registry_only_returns_loadable_datasets():
         assert frame.height > 2 * max(r.n for r in d.recipes)
 
 
+def test_nyc_taxi_spec_declared_but_skipped_when_file_absent():
+    from dvi.benchmark.real_eval.registry import NYC_TAXI_PATH, build_registry, dataset_specs
+
+    assert "nyc_taxi" in {s.id for s in dataset_specs()}
+    if not NYC_TAXI_PATH.exists():
+        assert "nyc_taxi" not in {d.id for d in build_registry()}
+
+
 def test_absent_dataset_is_skipped(monkeypatch):
     import dvi.benchmark.real_eval.registry as reg_mod
 

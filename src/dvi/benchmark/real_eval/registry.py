@@ -25,6 +25,7 @@ from dvi.benchmark.synthetic import (
 DATA_DIR = Path(__file__).resolve().parents[4] / "data"
 ADULT_PATH = DATA_DIR / "adult.parquet"
 ONLINE_RETAIL_PATH = DATA_DIR / "online_retail.parquet"
+NYC_TAXI_PATH = DATA_DIR / "local" / "nyc_taxi.parquet"
 
 
 @dataclass(frozen=True)
@@ -171,13 +172,50 @@ def _online_retail_spec() -> RealDataset:
     )
 
 
+def _nyc_taxi_spec() -> RealDataset:
+    return RealDataset(
+        id="nyc_taxi",
+        domain="urban mobility (scale)",
+        load=lambda: pl.read_parquet(NYC_TAXI_PATH).with_columns(
+            pl.col("payment_type").cast(pl.Utf8)
+        ),
+        fp_columns=["payment_type", "trip_distance", "fare_amount", "total_amount"],
+        recipes=[
+            InjectionRecipe(
+                "value_substitution", "payment_type",
+                lambda d: inject_value_substitution(d, "payment_type", "1", "credit"),
+                n=5000,
+            ),
+            InjectionRecipe(
+                "case_format_normalization", "payment_type",
+                lambda d: inject_case_format(d, "payment_type"), n=5000,
+            ),
+            InjectionRecipe(
+                "category_split_merge", "payment_type",
+                lambda d: inject_category_split(d, "payment_type", "1", ["1a", "1b"]),
+                n=5000,
+            ),
+            InjectionRecipe(
+                "numeric_distribution_shift", "fare_amount",
+                lambda d: inject_distribution_shift(d, "fare_amount", pivot=20.0, factor=2.0),
+                n=5000,
+            ),
+            InjectionRecipe(
+                "unit_scale_shift", "total_amount",
+                lambda d: inject_unit_scale(d, "total_amount", 100.0), n=5000,
+            ),
+        ],
+        committed=False,
+    )
+
+
 def _committed_specs() -> list[RealDataset]:
     return [_diamonds_spec(), _adult_spec(), _online_retail_spec()]
 
 
 def dataset_specs() -> list[RealDataset]:
-    """Every declared dataset (committed subset). NYC taxi is appended in Task 5."""
-    return _committed_specs()
+    """Every declared dataset. NYC taxi is git-ignored and skipped when absent."""
+    return [*_committed_specs(), _nyc_taxi_spec()]
 
 
 def build_registry() -> list[RealDataset]:
