@@ -5,6 +5,17 @@ All notable changes to DVI are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- Benchmark internals cleanup (#33, #34): `two_sample_splits` now lives in one
+  place (`dvi.benchmark._sampling`) instead of being duplicated verbatim across
+  `real_data` and `real_eval.experiments`. The legacy diamonds-only helpers were
+  renamed to end the name collision with the generalised harness —
+  `RealFpReport`/`RealRecallReport` → `DiamondsFpReport`/`DiamondsRecallReport`,
+  `real_vs_real_report`/`injected_recall_report` →
+  `diamonds_real_vs_real_report`/`diamonds_injected_recall_report`. Behavior is
+  unchanged; the `dvi.benchmark.real_eval` API and all reported numbers are
+  identical.
+
 ### Added
 - Auto-derive candidate change events from git commit history in CI, mapping
   changed dbt model files to lineage nodes; `[[changes]]` is now optional and

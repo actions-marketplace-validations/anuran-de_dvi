@@ -1,5 +1,6 @@
 """Benchmark: synthetic data and controlled failure injection with ground truth."""
 
+from ._sampling import two_sample_splits
 from .blast_radius import (
     BlastRadiusCase,
     BlastRadiusCaseResult,
@@ -20,14 +21,13 @@ from .evaluate import (
 )
 from .rca_cases import RcaCase, build_rca_cases
 from .real_data import (
+    DiamondsFpReport,
+    DiamondsRecallReport,
     RealDataReport,
-    RealFpReport,
-    RealRecallReport,
+    diamonds_injected_recall_report,
+    diamonds_real_vs_real_report,
     evaluate_real_data,
-    injected_recall_report,
     load_diamonds,
-    real_vs_real_report,
-    two_sample_splits,
 )
 from .scenarios import Scenario, build_scenarios
 from .synthetic import (
@@ -47,9 +47,9 @@ __all__ = [
     "RcaCase",
     "RcaCaseResult",
     "RcaReport",
+    "DiamondsFpReport",
+    "DiamondsRecallReport",
     "RealDataReport",
-    "RealFpReport",
-    "RealRecallReport",
     "Scenario",
     "ScenarioResult",
     "build_blast_radius_cases",
@@ -59,14 +59,14 @@ __all__ = [
     "evaluate",
     "evaluate_blast_radius",
     "evaluate_rca",
+    "diamonds_injected_recall_report",
+    "diamonds_real_vs_real_report",
     "evaluate_real_data",
     "inject_value_substitution",
-    "injected_recall_report",
     "load_diamonds",
     "make_orders",
     "numeric",
     "ramp",
-    "real_vs_real_report",
     "recall_at_fixed_fp",
     "sweep",
     "two_sample_splits",

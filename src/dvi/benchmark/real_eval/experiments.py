@@ -17,18 +17,9 @@ from dvi.calibration.model import LogisticModel
 from dvi.detection import DEFAULT_DISTRIBUTION_THRESHOLD
 from dvi.pipeline.analyze import detect_symptoms
 
+from .._sampling import two_sample_splits
+
 Pair = tuple[float, int]
-
-
-def two_sample_splits(
-    df: pl.DataFrame, n: int, trials: int, *, seed: int = 0
-) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
-    """Return ``trials`` pairs of disjoint size-``n`` samples of the same frame."""
-    splits: list[tuple[pl.DataFrame, pl.DataFrame]] = []
-    for t in range(trials):
-        shuffled = df.sample(fraction=1.0, shuffle=True, seed=seed + t)
-        splits.append((shuffled.slice(0, n), shuffled.slice(n, n)))
-    return splits
 
 
 @dataclass(frozen=True)

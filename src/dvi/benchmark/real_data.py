@@ -34,6 +34,7 @@ from dvi.detection import (
 )
 from dvi.profiling import profile_column
 
+from ._sampling import two_sample_splits
 from .synthetic import inject_value_substitution
 
 # Bundled at the repo root so the benchmark runs offline and deterministically.
@@ -48,22 +49,6 @@ def load_diamonds() -> pl.DataFrame:
             "run from a checkout that includes data/diamonds.parquet."
         )
     return pl.read_parquet(DIAMONDS_PATH)
-
-
-def two_sample_splits(
-    df: pl.DataFrame, n: int, trials: int, *, seed: int = 0
-) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
-    """Return ``trials`` pairs of disjoint size-``n`` samples of the same frame.
-
-    Each trial reshuffles the whole frame (seeded) and takes the first ``n`` rows
-    as the baseline and the next ``n`` as the current — so within a trial the two
-    halves never share a row.
-    """
-    splits: list[tuple[pl.DataFrame, pl.DataFrame]] = []
-    for t in range(trials):
-        shuffled = df.sample(fraction=1.0, shuffle=True, seed=seed + t)
-        splits.append((shuffled.slice(0, n), shuffled.slice(n, n)))
-    return splits
 
 
 def _firing_detectors(
@@ -85,7 +70,7 @@ def _firing_detectors(
 
 
 @dataclass(frozen=True)
-class RealFpReport:
+class DiamondsFpReport:
     """Real-vs-real false-positive experiment result."""
 
     trials: int
@@ -98,7 +83,7 @@ class RealFpReport:
         return self.fires / self.checks if self.checks else 0.0
 
 
-def real_vs_real_report(
+def diamonds_real_vs_real_report(
     df: pl.DataFrame,
     *,
     columns: list[str],
@@ -106,7 +91,7 @@ def real_vs_real_report(
     trials: int,
     seed: int = 0,
     dist_threshold: float = DEFAULT_DISTRIBUTION_THRESHOLD,
-) -> RealFpReport:
+) -> DiamondsFpReport:
     """Run every detector over disjoint same-distribution splits; count any firing."""
     checks = 0
     fires = 0
@@ -119,11 +104,11 @@ def real_vs_real_report(
                 fires += 1
                 if len(examples) < 10:
                     examples.append(f"{col}: {', '.join(hit)}")
-    return RealFpReport(trials=trials, checks=checks, fires=fires, examples=examples)
+    return DiamondsFpReport(trials=trials, checks=checks, fires=fires, examples=examples)
 
 
 @dataclass(frozen=True)
-class RealRecallReport:
+class DiamondsRecallReport:
     """Injected-change recall experiment result."""
 
     trials: int
@@ -134,7 +119,7 @@ class RealRecallReport:
         return self.hits / self.trials if self.trials else 0.0
 
 
-def injected_recall_report(
+def diamonds_injected_recall_report(
     df: pl.DataFrame,
     *,
     column: str,
@@ -143,7 +128,7 @@ def injected_recall_report(
     n: int,
     trials: int,
     seed: int = 0,
-) -> RealRecallReport:
+) -> DiamondsRecallReport:
     """Plant a category rename into a real sample and measure recovery.
 
     Baseline and current are disjoint real draws; the rename is applied only to
@@ -158,15 +143,15 @@ def injected_recall_report(
         )
         if symptom is not None and to_value in (symptom.from_value, symptom.to_value):
             hits += 1
-    return RealRecallReport(trials=trials, hits=hits)
+    return DiamondsRecallReport(trials=trials, hits=hits)
 
 
 @dataclass(frozen=True)
 class RealDataReport:
     """Combined real-data validation: false positives + injected recall."""
 
-    fp: RealFpReport
-    recall: RealRecallReport
+    fp: DiamondsFpReport
+    recall: DiamondsRecallReport
 
 
 # Columns exercised in the real-vs-real experiment (categorical + numeric).
@@ -178,8 +163,8 @@ def evaluate_real_data(
 ) -> RealDataReport:
     """Run both real-data experiments and return the combined report."""
     frame = df if df is not None else load_diamonds()
-    fp = real_vs_real_report(frame, columns=_FP_COLUMNS, n=n, trials=trials)
-    recall = injected_recall_report(
+    fp = diamonds_real_vs_real_report(frame, columns=_FP_COLUMNS, n=n, trials=trials)
+    recall = diamonds_injected_recall_report(
         frame,
         column="clarity",
         from_value="SI1",
