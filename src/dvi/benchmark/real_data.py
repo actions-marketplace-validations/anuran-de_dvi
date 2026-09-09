@@ -34,6 +34,7 @@ from dvi.detection import (
 )
 from dvi.profiling import profile_column
 
+from ._sampling import two_sample_splits
 from .synthetic import inject_value_substitution
 
 # Bundled at the repo root so the benchmark runs offline and deterministically.
@@ -48,22 +49,6 @@ def load_diamonds() -> pl.DataFrame:
             "run from a checkout that includes data/diamonds.parquet."
         )
     return pl.read_parquet(DIAMONDS_PATH)
-
-
-def two_sample_splits(
-    df: pl.DataFrame, n: int, trials: int, *, seed: int = 0
-) -> list[tuple[pl.DataFrame, pl.DataFrame]]:
-    """Return ``trials`` pairs of disjoint size-``n`` samples of the same frame.
-
-    Each trial reshuffles the whole frame (seeded) and takes the first ``n`` rows
-    as the baseline and the next ``n`` as the current — so within a trial the two
-    halves never share a row.
-    """
-    splits: list[tuple[pl.DataFrame, pl.DataFrame]] = []
-    for t in range(trials):
-        shuffled = df.sample(fraction=1.0, shuffle=True, seed=seed + t)
-        splits.append((shuffled.slice(0, n), shuffled.slice(n, n)))
-    return splits
 
 
 def _firing_detectors(
