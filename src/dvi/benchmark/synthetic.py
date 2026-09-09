@@ -54,6 +54,62 @@ def inject_value_substitution(
     )
 
 
+def inject_case_format(df: pl.DataFrame, column: str) -> pl.DataFrame:
+    """Return a copy with every non-null string in ``column`` upper-cased.
+
+    The case/format normalisation incident: the vocabulary is preserved, only
+    the surface form changes. Nulls and row count are untouched.
+    """
+    return df.with_columns(pl.col(column).str.to_uppercase().alias(column))
+
+
+def inject_category_split(
+    df: pl.DataFrame, column: str, value: str, into: list[str]
+) -> pl.DataFrame:
+    """Return a copy where rows carrying ``value`` are split across ``into``.
+
+    The rows whose ``column == value`` are relabelled round-robin (by their
+    position among the matching rows) across ``into``; every other row is
+    untouched. Deterministic — no randomness. Schema and row count preserved.
+    """
+    # Position among the matching rows: a running count of prior matches.
+    match = pl.col(column) == value
+    rank = match.cum_sum() - 1  # 0-based index among matches; ignored for non-matches
+    expr = pl.col(column)
+    for i, label in enumerate(into):
+        expr = (
+            pl.when(match & (rank % len(into) == i))
+            .then(pl.lit(label))
+            .otherwise(expr)
+        )
+    return df.with_columns(expr.alias(column))
+
+
+def inject_unit_scale(df: pl.DataFrame, column: str, factor: float) -> pl.DataFrame:
+    """Return a copy with the numeric ``column`` multiplied by ``factor``.
+
+    The unit/scale incident: dollars silently re-encoded as cents (``factor=100``).
+    """
+    return df.with_columns((pl.col(column) * factor).alias(column))
+
+
+def inject_distribution_shift(
+    df: pl.DataFrame, column: str, pivot: float, factor: float
+) -> pl.DataFrame:
+    """Return a copy with values above ``pivot`` in ``column`` scaled by ``factor``.
+
+    A non-affine tail thickening (the ``_stretch_above`` shape from the synthetic
+    scenarios): the body of the distribution is unchanged, only the upper tail
+    moves, so it cannot be undone by a simple re-scale.
+    """
+    return df.with_columns(
+        pl.when(pl.col(column) > pivot)
+        .then(pl.col(column) * factor)
+        .otherwise(pl.col(column))
+        .alias(column)
+    )
+
+
 def categorical(column: str, counts: dict[str, int], seed: int = 0) -> pl.DataFrame:
     """Build a single-column categorical frame with exact per-value counts.
 

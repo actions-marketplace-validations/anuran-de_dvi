@@ -227,11 +227,20 @@ schema/type) are slotted in where cheap.
 
 ## Why you can trust it
 
+On the **synthetic scenario suite** the detectors reach 100% recall at 0% false
+positives; on **real, messy public datasets** (diamonds, adult census, online
+retail) they are validated by **injected-label evaluation** (known changes
+planted into real distributions) and **real-vs-real specificity** (near-silence
+on unchanged real data), reaching high recall at near-zero false positives.
+Synthetic-suite numbers below are labelled as such, and DVI is **not**
+independently validated on multi-tenant production incidents. Full methodology
+and results: [docs/validation.md](docs/validation.md).
+
 DVI is measured against decoys, not just positives — the hard test for a change
 detector is staying **silent when nothing changed**.
 
 <details>
-<summary><strong>Benchmark — 100% recall at 0% false positives</strong></summary>
+<summary><strong>Benchmark (synthetic suite) — 100% recall at 0% false positives</strong></summary>
 
 ```bash
 python scripts/benchmark.py
@@ -260,23 +269,28 @@ ranking under concurrent distractor deploys: **100% top-1 accuracy**.
 </details>
 
 <details>
-<summary><strong>Validated on real data (diamonds, 53,940 rows)</strong></summary>
+<summary><strong>Validated on real data (diamonds, adult census, online retail)</strong></summary>
 
 A synthetic benchmark can flatter its own detector. So DVI is validated against
-a real public dataset — split into two **disjoint samples of the same
-distribution** where every fired symptom is, by construction, a false positive.
+three real public datasets via `python -m dvi.benchmark.real_eval`: each is
+split into **disjoint samples of the same distribution** (real-vs-real, where
+any fired symptom is by construction a false positive), plus one known change
+per detector family injected into a real sample and checked for recall.
 
 ```text
-  Validation on real data (diamonds, 53,940 rows)
-  Real-vs-real false positives: 0/210 column-checks fire (0%) across 30 disjoint splits
-  Injected-rename recall       : 30/30 (100%)
+  Results (committed datasets, CI-reproducible)
+  pooled recall              : 96.0%
+  pooled false-positive rate : 1.9%
 ```
 
-This exposed and fixed a real robustness gap: the first run false-fired on
-nearly every split, because a share moving 3 points is a real event at 250k rows
-and pure sampling noise at 250. The fix is a **sample-size-aware significance
-guard**. Residual false positives exist only at very small samples (~1% at
-n=250) and vanish by n=1000.
+Recall is not uniform across datasets or reported away when it isn't perfect:
+diamonds recall is 88.7%, a real detector-precedence limitation on the `cut`
+case-format recipe, kept as-is rather than tuned. This line of work also
+uncovered and fixed an earlier robustness gap on diamonds alone — a share
+moving 3 points is a real event at 250k rows and pure sampling noise at 250 —
+via a **sample-size-aware significance guard**. Full per-dataset numbers,
+calibration on real data, and a git-ignored NYC-taxi scale run are in
+[docs/validation.md](docs/validation.md).
 </details>
 
 <details>
@@ -306,6 +320,7 @@ refit on all data and frozen to JSON, so inference needs no training data.
 | [docs/warehouse-pushdown.md](docs/warehouse-pushdown.md) | In-warehouse profiling, the executor contract, DuckDB/Snowflake |
 | [docs/incident-store.md](docs/incident-store.md) | Persisting incident history across runs |
 | [docs/frontend.md](docs/frontend.md) | The web UI (landing + operator dashboard) and how to deploy it |
+| [docs/validation.md](docs/validation.md) | Real-data evaluation methodology, results, and calibration |
 | [CHANGELOG.md](CHANGELOG.md) | Full per-milestone history (M1 → M6) |
 
 **Live demo:** the operator UI is deployed at
@@ -323,7 +338,7 @@ connectors come last. Every milestone below is complete and green in CI; see the
 | Milestone | Adds | Proves |
 |-----------|------|--------|
 | **M1** ✅ | Value-substitution signature end-to-end on synthetic data | The core hypothesis is alive |
-| **M2** ✅ | Signatures 2–5 + negatives/decoys benchmark + real-data validation | Full recall; **0 false positives on real same-distribution data** |
+| **M2** ✅ | Signatures 2–5 + negatives/decoys benchmark + real-data validation | Full recall on the synthetic suite; **0 false positives on real same-distribution data** on an initial single-dataset check, later broadened into a 3-dataset injected-label + real-vs-real harness (pooled recall 96.0%, fp 1.9% — see [docs/validation.md](docs/validation.md)) |
 | **M3** ✅ | Calibrated logistic confidence + out-of-fold reliability table | Honest, *measured* confidence (ECE ≈ 0.05) |
 | **M3.1** ✅ | Review-driven hardening: import-cycle, non-finite, noise floors, determinism | Correctness & honesty under scrutiny |
 | **M4** ✅ | Blast-radius + external-asset lineage (dashboards/ML/APIs) | Business-level impact |
