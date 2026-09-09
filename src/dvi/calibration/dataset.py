@@ -23,7 +23,8 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from ..benchmark.real_data import load_diamonds, two_sample_splits
+from ..benchmark._sampling import two_sample_splits
+from ..benchmark.real_data import load_diamonds
 from ..benchmark.scenarios import build_scenarios
 from ..benchmark.synthetic import inject_value_substitution
 from ..detection import (
