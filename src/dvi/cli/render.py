@@ -119,7 +119,10 @@ def render_json(
 
 def _summary_cell(result: AssetResult) -> str:
     if result.error is not None:
-        return f"⚠️ ERRORED — {result.error}"
+        # Keep the error on one table cell: collapse whitespace/newlines and
+        # escape pipes so a multi-line or pipe-bearing error can't break the row.
+        safe = " ".join(result.error.split()).replace("|", r"\|")
+        return f"⚠️ ERRORED — {safe}"
     if result.incident is None:
         return "✅ clean"
     emoji = _EMOJI.get(result.incident.severity, "🔴")

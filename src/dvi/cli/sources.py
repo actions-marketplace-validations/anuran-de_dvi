@@ -25,7 +25,7 @@ from dvi.pipeline import analyze_change, analyze_change_from_profiles
 from dvi.rca import ChangeEvent
 from dvi.warehouse import DuckDBDialect, SqlProfileSource
 
-from .config import AssetSpec, DviConfig, DviError, GateConfig, StoreConfig
+from .config import AssetSpec, DviConfig, DviError
 
 if TYPE_CHECKING:
     from dvi.calibration.model import LogisticModel
@@ -124,8 +124,7 @@ class SharedContext:
     lineage: LineageGraph
     derived_changes: list[ChangeEvent]
     model: LogisticModel | None
-    gate: GateConfig
-    store: StoreConfig | None
+    manifest_path: str
 
 
 def build_shared_context(config: DviConfig) -> SharedContext:
@@ -135,8 +134,7 @@ def build_shared_context(config: DviConfig) -> SharedContext:
         lineage=lineage,
         derived_changes=derived,
         model=_load_model(config),
-        gate=config.gate,
-        store=config.store,
+        manifest_path=config.lineage.manifest,
     )
 
 
@@ -207,10 +205,14 @@ def analyze_one(spec: AssetSpec, shared: SharedContext) -> AssetResult:
     """Analyze one asset; deliberate could-not-run failures become .error."""
     try:
         declared = _declared_changes(spec.changes, shared.lineage,
-                                     "<asset source>")
+                                     shared.manifest_path)
         changes = _combine(declared, shared.derived_changes)
         if not changes:
-            return AssetResult(spec.name, None, "no change events for asset")
+            return AssetResult(
+                spec.name, None,
+                f"no change events for asset '{spec.name}': declare [[changes]] "
+                "or run in a git repo whose commits touch a modeled asset",
+            )
         incident = _run_analysis(spec, shared, changes)
         return AssetResult(spec.name, incident, None)
     except DviError as e:

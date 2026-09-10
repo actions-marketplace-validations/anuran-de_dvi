@@ -392,6 +392,30 @@ def test_analyze_one_no_changes_is_errored_not_raised(tmp_path, monkeypatch):
     assert "no change events" in result.error
 
 
+def test_analyze_one_unresolved_target_error_names_real_manifest(tmp_path, monkeypatch):
+    # A change target that is not a lineage node must surface the REAL manifest
+    # path in the error, not a placeholder like "<asset source>".
+    _write_manifest(tmp_path / "manifest.json")
+    before, after = _frames()
+    before.write_csv(tmp_path / "before.csv")
+    after.write_csv(tmp_path / "after.csv")
+    cfg = _config(tmp_path, {
+        "kind": "file",
+        "before": str(tmp_path / "before.csv"),
+        "after": str(tmp_path / "after.csv"),
+    })
+    cfg.changes[0].targets = ["model.shop.does_not_exist"]
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert result.incident is None
+    assert result.error is not None
+    # The real manifest is named (the filename survives repr on any OS), and the
+    # old placeholder is gone.
+    assert "manifest.json" in result.error
+    assert "<asset source>" not in result.error
+
+
 def test_analyze_one_bad_source_is_errored_not_raised(tmp_path, monkeypatch):
     _write_manifest(tmp_path / "manifest.json")
     cfg = _config(tmp_path, {

@@ -124,6 +124,22 @@ def test_multi_markdown_marker_first_and_summary_rows():
     assert "FAILED" in md              # gate line present
 
 
+def test_multi_markdown_summary_cell_sanitizes_pipes_and_newlines():
+    # A multi-line error containing a pipe must not break the summary table row.
+    results = [
+        AssetResult("model.a", None, "boom | line1\nmore | line2"),
+    ]
+    md = render_multi_markdown(results, fail_on="high", gate_failed=True)
+    lines = md.splitlines()
+    summary_rows = [ln for ln in lines if ln.startswith("| `model.a`")]
+    assert len(summary_rows) == 1
+    row = summary_rows[0]
+    assert "\n" not in row
+    assert r"\|" in row              # raw pipe escaped
+    # the only unescaped pipes are the three cell delimiters
+    assert row.replace(r"\|", "").count("|") == 3
+
+
 def test_multi_json_sorted_assets_and_worst_severity():
     results = [
         AssetResult("model.a", _incident(), None),
