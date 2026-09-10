@@ -350,7 +350,7 @@ path = ".dvi/incidents.db"     # created on first run; omit to stay stateless
 ```
 
 Recording never changes the exit code. Query API: `history(asset)`,
-`get(identity)`, `prune(before=…)`. See
+`get(identity_key)`, `prune(before=…)`. See
 [docs/incident-store.md](incident-store.md).
 
 ---
