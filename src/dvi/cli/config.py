@@ -10,11 +10,19 @@ from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 class DviError(Exception):
@@ -100,15 +108,82 @@ class StoreConfig(BaseModel):
     path: str
 
 
-class DviConfig(BaseModel):
-    asset: str
+class AssetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
     source: FileSource | WarehouseSource = Field(discriminator="kind")
-    lineage: LineageConfig
     changes: list[ChangeConfig] = Field(default_factory=list)
+    columns: list[str] | None = None
+
+
+class DviConfig(BaseModel):
+    # legacy single-asset (optional now)
+    asset: str | None = None
+    source: FileSource | WarehouseSource | None = None
+    changes: list[ChangeConfig] = Field(default_factory=list)
+    columns: list[str] | None = None
+    # multi-asset
+    assets: list[AssetConfig] = Field(default_factory=list)
+    # shared across all assets
+    lineage: LineageConfig
     git: GitConfig = Field(default_factory=GitConfig)
     gate: GateConfig = Field(default_factory=GateConfig)
     store: StoreConfig | None = None
-    columns: list[str] | None = None
+
+    @property
+    def is_multi_asset(self) -> bool:
+        return len(self.assets) > 0
+
+    @model_validator(mode="after")
+    def _validate_mode(self) -> DviConfig:
+        legacy_active = self.asset is not None and self.source is not None
+        multi_active = len(self.assets) > 0
+        if legacy_active and multi_active:
+            raise ValueError(
+                "declare either a single top-level asset+source or an [[assets]] "
+                "list, not both"
+            )
+        if not legacy_active and not multi_active:
+            raise ValueError(
+                "no asset declared: set top-level asset+source, or an [[assets]] list"
+            )
+        if multi_active and (
+            self.asset is not None
+            or self.source is not None
+            or self.changes
+            or self.columns is not None
+        ):
+            raise ValueError(
+                "with [[assets]], declare asset/source/changes/columns per asset "
+                "inside each [[assets]] entry, not at the top level"
+            )
+        names = [a.name for a in self.assets]
+        if len(names) != len(set(names)):
+            dupes = sorted({n for n in names if names.count(n) > 1})
+            raise ValueError(f"duplicate asset name(s): {', '.join(dupes)}")
+        return self
+
+
+@dataclass(frozen=True)
+class AssetSpec:
+    name: str
+    source: FileSource | WarehouseSource
+    changes: list[ChangeConfig]
+    columns: list[str] | None
+
+
+def normalized_assets(config: DviConfig) -> list[AssetSpec]:
+    """Collapse legacy and multi-asset config into one canonical spec list."""
+    if config.is_multi_asset:
+        return [
+            AssetSpec(name=a.name, source=a.source, changes=list(a.changes),
+                      columns=a.columns)
+            for a in config.assets
+        ]
+    # legacy: validator guarantees asset and source are set here
+    assert config.asset is not None and config.source is not None
+    return [AssetSpec(name=config.asset, source=config.source,
+                      changes=list(config.changes), columns=config.columns)]
 
 
 def load_config(path: str | Path) -> DviConfig:
