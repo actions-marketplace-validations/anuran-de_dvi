@@ -1,7 +1,7 @@
 # tests/test_cli_gate.py
 import pytest
 
-from dvi.cli.gate import SEVERITY_LEVELS, exit_code, gate_failed
+from dvi.cli.gate import SEVERITY_LEVELS, exit_code, gate_failed, worst_severity
 
 
 @pytest.mark.parametrize(
@@ -29,3 +29,12 @@ def test_exit_code_maps_gate():
 
 def test_severity_levels_ordered():
     assert SEVERITY_LEVELS == ("low", "medium", "high", "critical")
+
+
+def test_worst_severity_picks_highest_rank():
+    assert worst_severity(["low", "critical", "high", None]) == "critical"
+
+
+def test_worst_severity_all_none_is_none():
+    assert worst_severity([None, None]) is None
+    assert worst_severity([]) is None
