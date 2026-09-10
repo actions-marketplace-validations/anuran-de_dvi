@@ -16,7 +16,8 @@ All notable changes to DVI are documented here. Format loosely follows
   recall recovers from 0.433 to 1.000, lifting the pooled real-data recall from
   0.960 to 0.998. `inject_case_format` also gains an optional `category` argument
   (re-case a single existing category, per the spec's wording); the diamonds
-  `cut` recipe now uses it.
+  `cut` recipe now uses it, and it raises if that category is absent rather than
+  silently returning the frame unchanged.
 
 ### Changed
 - Benchmark internals cleanup (#33, #34): `two_sample_splits` now lives in one
