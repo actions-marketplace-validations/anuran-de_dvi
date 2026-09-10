@@ -69,6 +69,11 @@ def inject_case_format(
     """
     if category is None:
         return df.with_columns(pl.col(column).str.to_uppercase().alias(column))
+    if not df.select((pl.col(column) == category).any()).item():
+        raise ValueError(
+            f"category {category!r} is not present in column {column!r}; "
+            "the injection would be a silent no-op"
+        )
     return df.with_columns(
         pl.when(pl.col(column) == category)
         .then(pl.col(column).str.to_uppercase())

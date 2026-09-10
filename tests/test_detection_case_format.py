@@ -103,6 +103,35 @@ def test_new_significant_category_still_blocks():
     assert detect_case_format_normalization(baseline, current) is None
 
 
+def test_small_new_category_blocks_only_via_appeared_gate():
+    # Pins the appeared/disappeared gate as load-bearing, not redundant with the
+    # total-variation guard. "CA" is a new significant category (3.5%, absent in
+    # baseline) fed by a matching drop elsewhere, so the total-variation distance
+    # is only 0.035 <= MASS_TOLERANCE (0.05) and the TV guard would let it pass.
+    # Only the appeared-category gate recognises "ca" as a genuinely new category
+    # and abstains; delete that gate and this re-casing would be mislabelled.
+    baseline = _cat("country", {"US": 490, "UK": 475, "XX": 35})
+    current = _cat("country", {"us": 475, "uk": 475, "xx": 15, "CA": 35})
+
+    assert detect_case_format_normalization(baseline, current) is None
+
+
+def test_category_dropping_below_threshold_still_detects():
+    # A category present on *both* sides but whose share slips from significant
+    # (3.5%) to a sub-threshold tail (2.0%) is the same category losing mass, not
+    # a new/removed one. Strict significant-set equality would have abstained
+    # here (the sets differ); the appeared/disappeared test does not, because
+    # "rare" is entirely absent on neither side. The dominant re-casing is still
+    # reported — this documents the intended loosening over the old gate.
+    baseline = _cat("country", {"US": 500, "UK": 465, "RARE": 35})
+    current = _cat("country", {"us": 500, "uk": 480, "rare": 20})
+
+    symptom = detect_case_format_normalization(baseline, current)
+
+    assert symptom is not None
+    assert symptom.signature == "case_format_normalization"
+
+
 def test_returns_none_for_numeric_column():
     from dvi.profiling import NumericStats
 
