@@ -18,6 +18,17 @@ def test_case_format_upper_cases_values_and_preserves_shape():
     assert out.height == df.height
 
 
+def test_case_format_single_category_only_recases_that_category():
+    # The spec describes normalising "an existing category" (singular): with a
+    # category argument, only that value's rows change surface form; every other
+    # category and the null keep their spelling. Models a realistic re-casing
+    # incident where one category was normalised, not the whole column.
+    df = pl.DataFrame({"c": ["Ideal", "Premium", None, "Ideal", "Good"]})
+    out = inject_case_format(df, "c", category="Ideal")
+    assert out["c"].to_list() == ["IDEAL", "Premium", None, "IDEAL", "Good"]
+    assert out.height == df.height
+
+
 def test_category_split_partitions_only_the_target_value():
     df = pl.DataFrame({"c": ["A", "A", "A", "A", "B"]})
     out = inject_category_split(df, "c", "A", ["A1", "A2"])

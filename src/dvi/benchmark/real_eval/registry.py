@@ -70,8 +70,11 @@ def _diamonds_spec() -> RealDataset:
                 n=2000,
             ),
             InjectionRecipe(
+                # Single-category re-casing (the spec's "normalise an existing
+                # category"): only "Ideal" rows change surface form, a realistic
+                # incident rather than folding the whole column at once.
                 "case_format_normalization", "cut",
-                lambda d: inject_case_format(d, "cut"), n=2000,
+                lambda d: inject_case_format(d, "cut", category="Ideal"), n=2000,
             ),
             InjectionRecipe(
                 "category_split_merge", "clarity",
