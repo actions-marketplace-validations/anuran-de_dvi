@@ -11,6 +11,7 @@ shared, so the two producers cannot decide differently — the M5a seam.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,7 +25,7 @@ from dvi.pipeline import analyze_change, analyze_change_from_profiles
 from dvi.rca import ChangeEvent
 from dvi.warehouse import DuckDBDialect, SqlProfileSource
 
-from .config import DviConfig, DviError
+from .config import AssetSpec, DviConfig, DviError, GateConfig, StoreConfig
 
 if TYPE_CHECKING:
     from dvi.calibration.model import LogisticModel
@@ -56,45 +57,56 @@ def _dedup_key(change: ChangeEvent) -> tuple[str, tuple[str, ...], datetime]:
     return (change.id, tuple(sorted(change.targets)), change.timestamp)
 
 
-def _lineage_and_changes(config: DviConfig) -> tuple[LineageGraph, list[ChangeEvent]]:
+def _load_lineage(config: DviConfig) -> LineageGraph:
     manifest_path = Path(config.lineage.manifest)
     if not manifest_path.exists():
         raise DviError(f"lineage manifest not found: {manifest_path}")
     try:
-        lineage = load_dbt_manifest(manifest_path)
+        return load_dbt_manifest(manifest_path)
     except Exception as e:  # noqa: BLE001
         raise DviError(f"could not read lineage manifest {manifest_path}: {e}") from e
 
-    changes: list[ChangeEvent] = []
-    for change in config.changes:
+
+def _derive_changes(config: DviConfig, lineage: LineageGraph) -> list[ChangeEvent]:
+    base, head = resolve_range(os.environ, config.git.base, config.git.head)
+    commits = collect_commits(base, head, cwd=Path.cwd())
+    return derive_change_events(commits, lineage.nodes_for_file)
+
+
+def _declared_changes(
+    changes: list, lineage: LineageGraph, manifest: str
+) -> list[ChangeEvent]:
+    out: list[ChangeEvent] = []
+    for change in changes:
         for target in change.targets:
             if target not in lineage.nodes:
                 raise DviError(
                     f"change {change.id!r} target {target!r} is not a node in "
-                    f"lineage manifest {config.lineage.manifest!r}"
+                    f"lineage manifest {manifest!r}"
                 )
-        changes.append(
-            ChangeEvent(
-                id=change.id,
-                timestamp=change.timestamp,
-                targets=list(change.targets),
-                label=change.label,
-            )
-        )
+        out.append(ChangeEvent(id=change.id, timestamp=change.timestamp,
+                               targets=list(change.targets), label=change.label))
+    return out
 
-    base, head = resolve_range(os.environ, config.git.base, config.git.head)
-    commits = collect_commits(base, head, cwd=Path.cwd())
-    derived = derive_change_events(commits, lineage.nodes_for_file)
 
+def _combine(declared: list[ChangeEvent], derived: list[ChangeEvent]) -> list[ChangeEvent]:
     combined: list[ChangeEvent] = []
     seen: set[tuple[str, tuple[str, ...], datetime]] = set()
-    for change in [*changes, *derived]:
+    for change in [*declared, *derived]:
         key = _dedup_key(change)
         if key in seen:
             continue
         seen.add(key)
         combined.append(change)
-    return lineage, combined
+    return combined
+
+
+def _lineage_and_changes(config: DviConfig) -> tuple[LineageGraph, list[ChangeEvent]]:
+    # Back-compat shim for the legacy single-asset path and its direct-call test.
+    lineage = _load_lineage(config)
+    declared = _declared_changes(config.changes, lineage, config.lineage.manifest)
+    derived = _derive_changes(config, lineage)
+    return lineage, _combine(declared, derived)
 
 
 def _load_model(config: DviConfig) -> LogisticModel | None:
@@ -107,40 +119,55 @@ def _load_model(config: DviConfig) -> LogisticModel | None:
     return load_model()
 
 
-def incident_from_config(config: DviConfig) -> Incident | None:
-    """Analyze the configured before/after snapshot and return an incident."""
-    lineage, changes = _lineage_and_changes(config)
-    if not changes:
-        raise DviError(
-            "no change events: declare [[changes]] or run in a git repo whose "
-            "commits touch a modeled asset"
-        )
-    model = _load_model(config)
+@dataclass(frozen=True)
+class SharedContext:
+    lineage: LineageGraph
+    derived_changes: list[ChangeEvent]
+    model: LogisticModel | None
+    gate: GateConfig
+    store: StoreConfig | None
+
+
+def build_shared_context(config: DviConfig) -> SharedContext:
+    lineage = _load_lineage(config)
+    derived = _derive_changes(config, lineage)
+    return SharedContext(
+        lineage=lineage,
+        derived_changes=derived,
+        model=_load_model(config),
+        gate=config.gate,
+        store=config.store,
+    )
+
+
+@dataclass(frozen=True)
+class AssetResult:
+    name: str
+    incident: Incident | None
+    error: str | None
+
+
+def _run_analysis(
+    spec: AssetSpec, shared: SharedContext, changes: list[ChangeEvent]
+) -> Incident | None:
     # Anchor the observation to the newest change (declared or derived), not the
     # wall clock, so re-runs are deterministic and the RCA lead window is stable.
     observed_at = max(c.timestamp for c in changes)
-
-    source = config.source
+    source = spec.source
     if source.kind == "file":
         before = _read_frame(source.before)
         after = _read_frame(source.after)
         try:
             return analyze_change(
-                asset=config.asset,
-                before=before,
-                after=after,
-                observed_at=observed_at,
-                lineage=lineage,
-                changes=changes,
-                columns=config.columns,
-                model=model,
+                asset=spec.name, before=before, after=after, observed_at=observed_at,
+                lineage=shared.lineage, changes=changes, columns=spec.columns,
+                model=shared.model,
             )
         except DviError:
             raise
-        except Exception as e:  # noqa: BLE001 - map any analysis failure to a clear error
+        except Exception as e:  # noqa: BLE001
             raise DviError(f"analysis failed: {e}") from e
 
-    # warehouse
     import duckdb
 
     db = Path(source.database)
@@ -156,29 +183,47 @@ def incident_from_config(config: DviConfig) -> Incident | None:
 
         dialect = DuckDBDialect()
         try:
-            before = SqlProfileSource(
-                execute, source.before_table, dialect=dialect
-            ).profile(config.columns)
-            after = SqlProfileSource(
-                execute, source.after_table, dialect=dialect
-            ).profile(config.columns)
-        except Exception as e:  # noqa: BLE001 - clear error, not a raw DB traceback
+            before = SqlProfileSource(execute, source.before_table,
+                                      dialect=dialect).profile(spec.columns)
+            after = SqlProfileSource(execute, source.after_table,
+                                     dialect=dialect).profile(spec.columns)
+        except Exception as e:  # noqa: BLE001
             raise DviError(f"warehouse profiling failed: {e}") from e
     finally:
         con.close()
-
     try:
         return analyze_change_from_profiles(
-            asset=config.asset,
-            before=before,
-            after=after,
-            observed_at=observed_at,
-            lineage=lineage,
-            changes=changes,
-            columns=config.columns,
-            model=model,
+            asset=spec.name, before=before, after=after, observed_at=observed_at,
+            lineage=shared.lineage, changes=changes, columns=spec.columns,
+            model=shared.model,
         )
     except DviError:
         raise
-    except Exception as e:  # noqa: BLE001 - map any analysis failure to a clear error
+    except Exception as e:  # noqa: BLE001
         raise DviError(f"analysis failed: {e}") from e
+
+
+def analyze_one(spec: AssetSpec, shared: SharedContext) -> AssetResult:
+    """Analyze one asset; deliberate could-not-run failures become .error."""
+    try:
+        declared = _declared_changes(spec.changes, shared.lineage,
+                                     "<asset source>")
+        changes = _combine(declared, shared.derived_changes)
+        if not changes:
+            return AssetResult(spec.name, None, "no change events for asset")
+        incident = _run_analysis(spec, shared, changes)
+        return AssetResult(spec.name, incident, None)
+    except DviError as e:
+        return AssetResult(spec.name, None, str(e))
+
+
+def incident_from_config(config: DviConfig) -> Incident | None:
+    """Legacy single-asset entrypoint: analyze the one configured asset."""
+    from .config import normalized_assets
+
+    spec = normalized_assets(config)[0]
+    shared = build_shared_context(config)
+    result = analyze_one(spec, shared)
+    if result.error is not None:
+        raise DviError(result.error)
+    return result.incident
