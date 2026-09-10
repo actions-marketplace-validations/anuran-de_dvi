@@ -76,6 +76,33 @@ def test_respelling_of_only_a_noise_sized_category_does_not_fire():
     assert detect_case_format_normalization(baseline, current) is None
 
 
+def test_boundary_category_jitter_does_not_block_detection():
+    # A low-share category ("fair", ~3%) sits right on the MIN_SHARE floor and
+    # jitters across it between two disjoint real samples: 3.2% in baseline,
+    # 2.6% in current. It is *present with real mass on both sides* — the same
+    # category, not a new/removed one — while the dominant categories are an
+    # obvious re-casing. A hard significant-set equality bails on that jitter
+    # (this is the diamonds `cut` "Fair" flicker); an appeared/disappeared test
+    # ignores it and still reports the re-spelling.
+    baseline = _cat("cut", {"Ideal": 400, "Premium": 340, "Good": 228, "Fair": 32})
+    current = _cat("cut", {"IDEAL": 402, "PREMIUM": 338, "GOOD": 234, "FAIR": 26})
+
+    symptom = detect_case_format_normalization(baseline, current)
+
+    assert symptom is not None
+    assert symptom.signature == "case_format_normalization"
+
+
+def test_new_significant_category_still_blocks():
+    # A genuinely new significant category ("CA", 10%, absent in baseline) is
+    # substitution/split territory, not re-casing — the detector must still
+    # abstain even though "US" -> "us" looks like a re-spelling on its own.
+    baseline = _cat("country", {"US": 600, "UK": 400})
+    current = _cat("country", {"us": 500, "uk": 400, "CA": 100})
+
+    assert detect_case_format_normalization(baseline, current) is None
+
+
 def test_returns_none_for_numeric_column():
     from dvi.profiling import NumericStats
 
