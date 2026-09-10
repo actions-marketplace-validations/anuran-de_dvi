@@ -136,6 +136,48 @@ It writes `.dvi/dvi-report.md` + `.dvi/dvi-report.json` and sets the exit code:
 `0` (clean or below gate), `1` (gate tripped), `2` (could not run). Full
 reference: [docs/cli.md](docs/cli.md).
 
+### Scanning multiple assets
+
+One `dvi.toml` can declare a list of `[[assets]]` instead of a single top-level
+asset. Each entry carries its own `name`, `source`, optional `columns`, and
+optional `[[assets.changes]]`; `lineage`, `git`, `gate`, and `store` stay
+top-level and are shared across every asset:
+
+```toml
+[lineage]
+manifest = "target/manifest.json"
+
+[[assets]]
+name = "model.shop.fct_orders"
+columns = ["country"]
+[assets.source]
+kind = "file"
+before = "before/fct_orders.parquet"
+after = "after/fct_orders.parquet"
+[[assets.changes]]
+id = "pr-42"
+targets = ["model.shop.stg_orders"]
+timestamp = 2026-09-10T09:00:00
+
+[[assets]]
+name = "model.shop.dim_customer"
+columns = ["segment"]
+[assets.source]
+kind = "file"
+before = "before/dim_customer.parquet"
+after = "after/dim_customer.parquet"
+```
+
+Assets are processed in deterministic **sorted-by-name** order. The run emits a
+single aggregated `dvi-report.md` / `dvi-report.json` (a summary table plus a
+per-asset drill-down), guarded by **one worst-severity gate** — the gate reads
+the highest severity across all assets. The process exit code is the worst
+outcome, with precedence **gate trip (1) beats an errored asset (2) beats clean
+(0)**. The legacy single-asset config (top-level `asset` + `source`) is
+unchanged and fully back-compatible — its report and exit code are
+byte-identical to before. The two modes are mutually exclusive. Full reference:
+[docs/cli.md](docs/cli.md).
+
 ### In CI (GitHub Action)
 
 DVI ships a composite Action that runs on a pull request and posts the report as
@@ -352,7 +394,6 @@ connectors come last. Every milestone below is complete and green in CI; see the
   downstream assets register via dbt exposures until then.
 - **Warehouses beyond DuckDB** (executed in CI) and **Snowflake** (dialect +
   SQL-gen tests, not CI-executed) — another warehouse needs a new `SqlDialect`.
-- **Multi-asset runs** — one `dvi analyze` run covers one asset.
 - **Forges beyond GitHub** and **any autonomous remediation**.
 
 ## Contributing
