@@ -46,29 +46,37 @@ production incidents. Real-vs-real measures specificity on unchanged real data.
 | dataset | domain | recall | false-positive rate |
 |---------|--------|--------|---------------------|
 | adult | census income | 1.000 | 0.006 |
-| diamonds | retail pricing | 0.887 | 0.000 |
+| diamonds | retail pricing | 1.000 | 0.000 |
 | online_retail | e-commerce transactions | 0.993 | 0.089 |
-| **pooled** | — | **0.960** | **0.019** |
+| **pooled** | — | **0.998** | **0.019** |
 
-The diamonds row is deliberately reported as-is: 0.887 reflects a real
-detector-precedence limitation on the diamonds `cut` case-format recipe (a
-higher-precedence signature claims the column before the case-normalization
-signature gets a look), not a tuning artifact. It is not explained away here.
+The diamonds `cut` case-format recipe previously recovered only 0.433 (per-dataset
+0.887). The cause was not detector precedence but a spurious *abstention*: the
+case-normalization detector bailed whenever the significant category set differed
+between the two disjoint real samples, and `cut`'s "Fair" category (2.98% of rows)
+sits right on the 3% relevance floor, so it jittered across it — 3.2% in one
+sample, 2.6% in the other — and read as a category-set change 17 trials in 30.
+The detector now abstains only on a category that is significant on one side and
+*entirely absent* on the other (a genuine new/removed category), not one merely
+jittering across the floor while present on both sides. Specificity is unchanged
+(the real-vs-real false-positive rate is byte-identical); the fix simply stops the
+detector mistaking sampling noise on a boundary category for a real change. See
+[issue #32](https://github.com/anuran-de/dvi/issues/32).
 
 ## Calibration on real data
 
-Reliability (n=912, positives=432)
+Reliability (n=929, positives=449)
 
 | bin | n | predicted | empirical | gap |
 |-----|---|-----------|-----------|-----|
 | 0.0-0.1 | 471 | 0.000 | 0.000 | 0.000 |
 | 0.8-0.9 | 9 | 0.869 | 0.000 | 0.869 |
-| 0.9-1.0 | 432 | 0.996 | 1.000 | 0.004 |
+| 0.9-1.0 | 449 | 0.996 | 1.000 | 0.004 |
 
-ECE = 0.0107   MCE = 0.8694   Brier = 0.0075
+ECE = 0.0105   MCE = 0.8694   Brier = 0.0074
 
 (ECE is count-weighted, dominated by the extremes; MCE is the worst bin. 0 of
-912 predictions land in [0.2, 0.8].)
+929 predictions land in [0.2, 0.8].)
 
 The confidence model is **not re-fit** here — these pairs test whether the
 shipped confidence (fit on the synthetic set) stays honest on real data.

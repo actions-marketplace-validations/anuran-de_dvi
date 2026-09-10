@@ -5,6 +5,20 @@ All notable changes to DVI are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Case/format detector no longer abstains on a boundary-category jitter (#32).
+  `detect_case_format_normalization` bailed whenever the significant normalized
+  category set differed between two samples; a low-share category sitting on the
+  3% relevance floor (diamonds `cut` "Fair", 2.98%) jittered across it between
+  disjoint real draws and read as a category-set change. It now abstains only on
+  a category significant on one side and entirely absent on the other (a genuine
+  new/removed category). Specificity is byte-identical; diamonds case-format
+  recall recovers from 0.433 to 1.000, lifting the pooled real-data recall from
+  0.960 to 0.998. `inject_case_format` also gains an optional `category` argument
+  (re-case a single existing category, per the spec's wording); the diamonds
+  `cut` recipe now uses it, and it raises if that category is absent rather than
+  silently returning the frame unchanged.
+
 ### Changed
 - Benchmark internals cleanup (#33, #34): `two_sample_splits` now lives in one
   place (`dvi.benchmark._sampling`) instead of being duplicated verbatim across

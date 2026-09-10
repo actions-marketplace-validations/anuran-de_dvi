@@ -54,13 +54,32 @@ def inject_value_substitution(
     )
 
 
-def inject_case_format(df: pl.DataFrame, column: str) -> pl.DataFrame:
-    """Return a copy with every non-null string in ``column`` upper-cased.
+def inject_case_format(
+    df: pl.DataFrame, column: str, category: str | None = None
+) -> pl.DataFrame:
+    """Return a copy with strings in ``column`` upper-cased.
 
     The case/format normalisation incident: the vocabulary is preserved, only
     the surface form changes. Nulls and row count are untouched.
+
+    With ``category`` set, only that category's rows are re-cased — the spec's
+    "normalise an existing category" shape, modelling a realistic incident where
+    one category was normalised rather than the whole column. With ``category``
+    ``None`` (the default), every non-null value is upper-cased.
     """
-    return df.with_columns(pl.col(column).str.to_uppercase().alias(column))
+    if category is None:
+        return df.with_columns(pl.col(column).str.to_uppercase().alias(column))
+    if not df.select((pl.col(column) == category).any()).item():
+        raise ValueError(
+            f"category {category!r} is not present in column {column!r}; "
+            "the injection would be a silent no-op"
+        )
+    return df.with_columns(
+        pl.when(pl.col(column) == category)
+        .then(pl.col(column).str.to_uppercase())
+        .otherwise(pl.col(column))
+        .alias(column)
+    )
 
 
 def inject_category_split(

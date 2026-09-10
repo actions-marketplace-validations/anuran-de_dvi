@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from dvi.benchmark.synthetic import (
     inject_case_format,
@@ -16,6 +17,26 @@ def test_case_format_upper_cases_values_and_preserves_shape():
     out = inject_case_format(df, "c")
     assert out["c"].to_list() == ["MALE", "FEMALE", None, "MALE"]
     assert out.height == df.height
+
+
+def test_case_format_single_category_only_recases_that_category():
+    # The spec describes normalising "an existing category" (singular): with a
+    # category argument, only that value's rows change surface form; every other
+    # category and the null keep their spelling. Models a realistic re-casing
+    # incident where one category was normalised, not the whole column.
+    df = pl.DataFrame({"c": ["Ideal", "Premium", None, "Ideal", "Good"]})
+    out = inject_case_format(df, "c", category="Ideal")
+    assert out["c"].to_list() == ["IDEAL", "Premium", None, "IDEAL", "Good"]
+    assert out.height == df.height
+
+
+def test_case_format_missing_category_raises():
+    # A category that is absent from the column would make the injection a silent
+    # no-op — the frame returns unchanged and that trial's recall is quietly 0.
+    # Fail loudly instead so a mistyped recipe can never measure nothing.
+    df = pl.DataFrame({"c": ["Ideal", "Premium", "Good"]})
+    with pytest.raises(ValueError, match="Nope"):
+        inject_case_format(df, "c", category="Nope")
 
 
 def test_category_split_partitions_only_the_target_value():

@@ -74,13 +74,19 @@ def detect_case_format_normalization(
     def _share(groups: dict[str, dict[str, int]], norm: str, non_null: int) -> float:
         return sum(groups.get(norm, {}).values()) / non_null
 
-    # Pure re-spelling preserves the *significant* normalized category set. A real
-    # new/removed category (>= MIN_SHARE) means substitution/split territory, so
-    # abstain; a sub-threshold tail key that differs between the two truncated
-    # top_k snapshots is ignored rather than blocking detection.
+    # Pure re-spelling preserves the underlying category set. A real new/removed
+    # category means substitution/split territory, so abstain — but only when a
+    # category is *significant* (>= MIN_SHARE) on one side and *entirely absent*
+    # on the other. A low-share category that merely jitters across MIN_SHARE
+    # between two samples (e.g. diamonds `cut` "Fair" at ~3%: 3.2% here, 2.6%
+    # there) is the *same* category present on both sides, not a new/removed one,
+    # and must not block detection. Sub-threshold tail keys that surface in only
+    # one truncated top_k are ignored the same way (they are not significant).
     base_sig = {n for n in base_groups if _share(base_groups, n, base_non_null) >= MIN_SHARE}
     curr_sig = {n for n in curr_groups if _share(curr_groups, n, curr_non_null) >= MIN_SHARE}
-    if base_sig != curr_sig:
+    appeared = {n for n in curr_sig if n not in base_groups}
+    disappeared = {n for n in base_sig if n not in curr_groups}
+    if appeared or disappeared:
         return None
 
     changed_mass = 0.0

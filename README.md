@@ -279,17 +279,21 @@ per detector family injected into a real sample and checked for recall.
 
 ```text
   Results (committed datasets, CI-reproducible)
-  pooled recall              : 96.0%
+  pooled recall              : 99.8%
   pooled false-positive rate : 1.9%
 ```
 
-Recall is not uniform across datasets or reported away when it isn't perfect:
-diamonds recall is 88.7%, a real detector-precedence limitation on the `cut`
-case-format recipe, kept as-is rather than tuned. This line of work also
-uncovered and fixed an earlier robustness gap on diamonds alone — a share
-moving 3 points is a real event at 250k rows and pure sampling noise at 250 —
-via a **sample-size-aware significance guard**. Full per-dataset numbers,
-calibration on real data, and a git-ignored NYC-taxi scale run are in
+Numbers are not reported away when they aren't perfect, and every gap is chased
+to its real cause. The diamonds `cut` case-format recipe once recovered only
+43%: the case detector abstained whenever a low-share category jittered across
+the 3% relevance floor between two samples — a pure sampling artifact on `cut`'s
+2.98% "Fair" category, mistaken for a real category change. Fixing that (abstain
+only on a category truly absent on one side, never one merely jittering) lifted
+it to 100% with **byte-identical specificity**, not by tuning a threshold. An
+earlier gap on diamonds — a share moving 3 points is a real event at 250k rows
+and pure sampling noise at 250 — was closed the same way, via a
+**sample-size-aware significance guard**. Full per-dataset numbers, calibration
+on real data, and a git-ignored NYC-taxi scale run are in
 [docs/validation.md](docs/validation.md).
 </details>
 
@@ -338,7 +342,7 @@ connectors come last. Every milestone below is complete and green in CI; see the
 | Milestone | Adds | Proves |
 |-----------|------|--------|
 | **M1** ✅ | Value-substitution signature end-to-end on synthetic data | The core hypothesis is alive |
-| **M2** ✅ | Signatures 2–5 + negatives/decoys benchmark + real-data validation | Full recall on the synthetic suite; **0 false positives on real same-distribution data** on an initial single-dataset check, later broadened into a 3-dataset injected-label + real-vs-real harness (pooled recall 96.0%, fp 1.9% — see [docs/validation.md](docs/validation.md)) |
+| **M2** ✅ | Signatures 2–5 + negatives/decoys benchmark + real-data validation | Full recall on the synthetic suite; **0 false positives on real same-distribution data** on an initial single-dataset check, later broadened into a 3-dataset injected-label + real-vs-real harness (pooled recall 99.8%, fp 1.9% — see [docs/validation.md](docs/validation.md)) |
 | **M3** ✅ | Calibrated logistic confidence + out-of-fold reliability table | Honest, *measured* confidence (ECE ≈ 0.05) |
 | **M3.1** ✅ | Review-driven hardening: import-cycle, non-finite, noise floors, determinism | Correctness & honesty under scrutiny |
 | **M4** ✅ | Blast-radius + external-asset lineage (dashboards/ML/APIs) | Business-level impact |
