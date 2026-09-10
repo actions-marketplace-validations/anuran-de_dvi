@@ -8,6 +8,11 @@
 #       fetch-depth: 0        # DVI derives change events from commit history
 #   - uses: anuran-de/dvi@v1
 #
+# The referenced dvi.toml may declare a single asset or an [[assets]] list. For a
+# multi-asset config the sticky comment carries the aggregated report and the
+# gate reflects the worst severity across all assets; the `<!-- dvi-report -->`
+# marker stays on the first line, so the comment-update step below is unchanged.
+#
 name: "DVI semantic data-change report"
 description: "Run DVI on a pull request and post a semantic-data-change report."
 author: "Anuran De"

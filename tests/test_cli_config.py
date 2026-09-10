@@ -3,7 +3,25 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from dvi.cli.config import DviConfig, DviError, load_config
+from dvi.cli.config import AssetSpec, DviConfig, DviError, load_config, normalized_assets
+
+
+def _file_source(before="b.parquet", after="a.parquet") -> dict:
+    return {"kind": "file", "before": before, "after": after}
+
+
+def _lineage(tmp_path) -> dict:
+    return {"manifest": str(tmp_path / "manifest.json")}
+
+
+def load_config_from_dict(data: dict):
+    from pydantic import ValidationError
+
+    from dvi.cli.config import DviConfig, DviError
+    try:
+        return DviConfig.model_validate(data)
+    except ValidationError as e:
+        raise DviError(str(e)) from e
 
 _BASE = {
     "asset": "model.shop.fct_orders",
@@ -219,6 +237,73 @@ def test_change_timestamp_toml_offset_datetime_normalized_to_naive_utc(tmp_path)
     ts = cfg.changes[0].timestamp
     assert ts == datetime(2026, 8, 25, 9, 50, 0)
     assert ts.tzinfo is None
+
+
+def test_legacy_single_asset_normalizes_to_one_spec(tmp_path):
+    cfg = DviConfig.model_validate({
+        "asset": "model.shop.fct_orders",
+        "columns": ["country"],
+        "source": _file_source(),
+        "lineage": _lineage(tmp_path),
+    })
+    specs = normalized_assets(cfg)
+    assert cfg.is_multi_asset is False
+    assert len(specs) == 1
+    assert isinstance(specs[0], AssetSpec)
+    assert specs[0].name == "model.shop.fct_orders"
+    assert specs[0].columns == ["country"]
+    assert specs[0].source.kind == "file"
+
+
+def test_assets_list_normalizes_in_declaration_order(tmp_path):
+    cfg = DviConfig.model_validate({
+        "lineage": _lineage(tmp_path),
+        "assets": [
+            {"name": "model.b", "source": _file_source("b_b", "b_a")},
+            {"name": "model.a", "source": _file_source("a_b", "a_a"),
+             "columns": ["x"]},
+        ],
+    })
+    specs = normalized_assets(cfg)
+    assert cfg.is_multi_asset is True
+    assert [s.name for s in specs] == ["model.b", "model.a"]   # declaration order here
+    assert specs[1].columns == ["x"]
+
+
+def test_both_modes_declared_is_error(tmp_path):
+    with pytest.raises(DviError):
+        load_config_from_dict({
+            "asset": "model.x",
+            "source": _file_source(),
+            "lineage": _lineage(tmp_path),
+            "assets": [{"name": "model.y", "source": _file_source()}],
+        })
+
+
+def test_neither_mode_declared_is_error(tmp_path):
+    with pytest.raises(DviError):
+        load_config_from_dict({"lineage": _lineage(tmp_path)})
+
+
+def test_top_level_change_alongside_assets_is_error(tmp_path):
+    with pytest.raises(DviError):
+        load_config_from_dict({
+            "lineage": _lineage(tmp_path),
+            "changes": [{"id": "pr-1", "targets": ["model.x"],
+                         "timestamp": "2026-08-25T09:50:00"}],
+            "assets": [{"name": "model.y", "source": _file_source()}],
+        })
+
+
+def test_duplicate_asset_name_is_error(tmp_path):
+    with pytest.raises(DviError):
+        load_config_from_dict({
+            "lineage": _lineage(tmp_path),
+            "assets": [
+                {"name": "dup", "source": _file_source()},
+                {"name": "dup", "source": _file_source()},
+            ],
+        })
 
 
 def test_change_timestamp_naive_input_unchanged():

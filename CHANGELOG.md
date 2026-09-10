@@ -31,6 +31,11 @@ All notable changes to DVI are documented here. Format loosely follows
   identical.
 
 ### Added
+- Multi-asset scanning: one dvi.toml can declare an [[assets]] list; the run
+  emits a single aggregated report, a worst-severity gate, and one exit code
+  (gate-trip 1 > errored 2 > clean 0), with assets processed in deterministic
+  name order. Legacy single-asset configs are unchanged (byte-identical output)
+  (#12).
 - Auto-derive candidate change events from git commit history in CI, mapping
   changed dbt model files to lineage nodes; `[[changes]]` is now optional and
   is unioned with derived events (#11). Requires `actions/checkout` with
