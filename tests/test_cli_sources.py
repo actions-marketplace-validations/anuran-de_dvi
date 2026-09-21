@@ -8,8 +8,13 @@ import pytest
 
 import dvi.cli.sources as sources_mod
 from dvi.changes import CommitRecord
-from dvi.cli.config import DviConfig, DviError
-from dvi.cli.sources import incident_from_config
+from dvi.cli.config import AssetSpec, DviConfig, DviError
+from dvi.cli.sources import (
+    AssetResult,
+    analyze_one,
+    build_shared_context,
+    incident_from_config,
+)
 
 
 def _write_manifest(path: Path) -> None:
@@ -324,3 +329,137 @@ def test_offset_aware_explicit_timestamp_unions_with_derived_without_typeerror(
 
     incident = sources_mod.incident_from_config(config)
     assert incident is not None
+
+
+def _spec_from(config: DviConfig) -> AssetSpec:
+    from dvi.cli.config import normalized_assets
+    return normalized_assets(config)[0]
+
+
+def test_analyze_one_returns_incident_result(tmp_path, monkeypatch):
+    _write_manifest(tmp_path / "manifest.json")
+    before, after = _frames()
+    before.write_csv(tmp_path / "before.csv")
+    after.write_csv(tmp_path / "after.csv")
+    cfg = _config(tmp_path, {
+        "kind": "file",
+        "before": str(tmp_path / "before.csv"),
+        "after": str(tmp_path / "after.csv"),
+    })
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert isinstance(result, AssetResult)
+    assert result.error is None
+    assert result.incident is not None
+    assert result.incident.severity == "high"
+
+
+def test_analyze_one_clean_pair_has_no_incident_no_error(tmp_path, monkeypatch):
+    _write_manifest(tmp_path / "manifest.json")
+    before, _ = _frames()
+    before.write_csv(tmp_path / "same.csv")
+    cfg = _config(tmp_path, {
+        "kind": "file",
+        "before": str(tmp_path / "same.csv"),
+        "after": str(tmp_path / "same.csv"),
+    })
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert result.incident is None
+    assert result.error is None
+
+
+def test_analyze_one_no_changes_is_errored_not_raised(tmp_path, monkeypatch):
+    _manifest_with_paths(tmp_path / "manifest.json")
+    before = tmp_path / "b.parquet"
+    after = tmp_path / "a.parquet"
+    b, a = _frames()
+    b.write_parquet(before)
+    a.write_parquet(after)
+    cfg = DviConfig.model_validate({
+        "asset": "model.shop.fct_orders",
+        "columns": ["country"],
+        "source": {"kind": "file", "before": str(before), "after": str(after)},
+        "lineage": {"manifest": str(tmp_path / "manifest.json")},
+    })
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert result.incident is None
+    assert result.error is not None
+    assert "no change events" in result.error
+
+
+def test_analyze_one_unresolved_target_error_names_real_manifest(tmp_path, monkeypatch):
+    # A change target that is not a lineage node must surface the REAL manifest
+    # path in the error, not a placeholder like "<asset source>".
+    _write_manifest(tmp_path / "manifest.json")
+    before, after = _frames()
+    before.write_csv(tmp_path / "before.csv")
+    after.write_csv(tmp_path / "after.csv")
+    cfg = _config(tmp_path, {
+        "kind": "file",
+        "before": str(tmp_path / "before.csv"),
+        "after": str(tmp_path / "after.csv"),
+    })
+    cfg.changes[0].targets = ["model.shop.does_not_exist"]
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert result.incident is None
+    assert result.error is not None
+    # The real manifest is named (the filename survives repr on any OS), and the
+    # old placeholder is gone.
+    assert "manifest.json" in result.error
+    assert "<asset source>" not in result.error
+
+
+def test_analyze_one_bad_source_is_errored_not_raised(tmp_path, monkeypatch):
+    _write_manifest(tmp_path / "manifest.json")
+    cfg = _config(tmp_path, {
+        "kind": "file",
+        "before": str(tmp_path / "nope.csv"),
+        "after": str(tmp_path / "nope.csv"),
+    })
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    shared = build_shared_context(cfg)
+    result = analyze_one(_spec_from(cfg), shared)
+    assert result.incident is None
+    assert result.error is not None
+
+
+def test_shared_context_loads_manifest_once_across_assets(tmp_path, monkeypatch):
+    _write_manifest(tmp_path / "manifest.json")
+    calls = {"n": 0}
+    real = sources_mod.load_dbt_manifest
+
+    def counting(path):
+        calls["n"] += 1
+        return real(path)
+
+    monkeypatch.setattr(sources_mod, "load_dbt_manifest", counting)
+    monkeypatch.setattr(sources_mod, "collect_commits", lambda *a, **k: [])
+    before, after = _frames()
+    before.write_csv(tmp_path / "b.csv")
+    after.write_csv(tmp_path / "a.csv")
+    cfg = DviConfig.model_validate({
+        "lineage": {"manifest": str(tmp_path / "manifest.json")},
+        "assets": [
+            {"name": "model.shop.fct_orders",
+             "source": {"kind": "file", "before": str(tmp_path / "b.csv"),
+                        "after": str(tmp_path / "a.csv")},
+             "columns": ["country"],
+             "changes": [{"id": "pr-1", "targets": ["model.shop.stg_orders"],
+                          "timestamp": "2026-08-25T09:50:00"}]},
+            {"name": "model.shop.stg_orders",
+             "source": {"kind": "file", "before": str(tmp_path / "b.csv"),
+                        "after": str(tmp_path / "a.csv")},
+             "columns": ["country"],
+             "changes": [{"id": "pr-1", "targets": ["model.shop.stg_orders"],
+                          "timestamp": "2026-08-25T09:50:00"}]},
+        ],
+    })
+    build_shared_context(cfg)
+    assert calls["n"] == 1

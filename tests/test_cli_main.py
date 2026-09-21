@@ -4,7 +4,11 @@ from pathlib import Path
 
 import polars as pl
 
+from dvi.cli.config import load_config, normalized_assets
+from dvi.cli.gate import gate_failed, worst_severity
 from dvi.cli.main import main
+from dvi.cli.render import render_json, render_markdown
+from dvi.cli.sources import analyze_one, build_shared_context
 
 
 def _write_manifest(path: Path) -> None:
@@ -141,3 +145,191 @@ def test_main_source_override(tmp_path):
     ])
 
     assert code == 1  # override restored the real 'after' → incident fires
+
+
+def _multi_config_text(tmp_path, a_before, a_after, b_before, b_after) -> str:
+    change_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    manifest = (tmp_path / "manifest.json").as_posix()
+    return (
+        "[lineage]\n"
+        f'manifest = "{manifest}"\n'
+        "[[assets]]\n"
+        'name = "model.shop.fct_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{a_before}"\n'
+        f'after = "{a_after}"\n'
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n"
+        "[[assets]]\n"
+        'name = "model.shop.stg_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{b_before}"\n'
+        f'after = "{b_after}"\n'
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n"
+    )
+
+
+def test_main_multi_asset_aggregated_report(tmp_path):
+    _write_manifest(tmp_path / "manifest.json")
+    inc_before = pl.DataFrame({"country": ["UK"] * 40 + ["US"] * 40 + ["DE"] * 20})
+    inc_after = pl.DataFrame({"country": ["GB"] * 40 + ["US"] * 40 + ["DE"] * 20})
+    inc_before.write_csv(tmp_path / "a_b.csv")
+    inc_after.write_csv(tmp_path / "a_a.csv")
+    inc_before.write_csv(tmp_path / "b_b.csv")   # second asset: clean (same file)
+    inc_before.write_csv(tmp_path / "b_a.csv")
+    cfg = tmp_path / "dvi.toml"
+    cfg.write_text(_multi_config_text(
+        tmp_path, (tmp_path / "a_b.csv").as_posix(), (tmp_path / "a_a.csv").as_posix(),
+        (tmp_path / "b_b.csv").as_posix(), (tmp_path / "b_a.csv").as_posix()),
+        encoding="utf-8")
+    out = tmp_path / "out"
+    code = main(["analyze", "--config", str(cfg), "--output-dir", str(out)])
+    assert code == 1                       # fct_orders incident trips the gate
+    data = json.loads((out / "dvi-report.json").read_text(encoding="utf-8"))
+    assert [a["asset"] for a in data["assets"]] == \
+        ["model.shop.fct_orders", "model.shop.stg_orders"]   # sorted by name
+    assert data["gate"]["worst_severity"] == "high"
+    md = (out / "dvi-report.md").read_text(encoding="utf-8")
+    assert md.splitlines()[0] == "<!-- dvi-report -->"
+    assert "| Asset | Result |" in md
+
+
+def test_main_legacy_single_asset_output_is_byte_identical(tmp_path):
+    # Golden: the legacy path is byte-for-byte reproducible from the same public
+    # renderers main uses. The reference is DERIVED (never hardcoded) by mirroring
+    # main's legacy branch, threading main's own timestamp so the sole dynamic
+    # field (generated_at) matches by construction.
+    cfg = _setup(tmp_path)                 # existing legacy helper
+    out = tmp_path / "out"
+    main(["analyze", "--config", str(cfg), "--output-dir", str(out)])
+    md = (out / "dvi-report.md").read_text(encoding="utf-8")
+    json_text = (out / "dvi-report.json").read_text(encoding="utf-8")
+    data = json.loads(json_text)
+
+    # Rebuild the reference incident + params exactly as main's legacy branch does.
+    config = load_config(str(cfg))
+    specs = sorted(normalized_assets(config), key=lambda s: s.name)
+    shared = build_shared_context(config)
+    results = [analyze_one(spec, shared) for spec in specs]
+    worst = worst_severity(r.incident.severity if r.incident else None for r in results)
+    failed = gate_failed(worst, config.gate.fail_on)
+    r = results[0]
+
+    # Markdown has no timestamp → exact byte-for-byte equality.
+    assert md == render_markdown(
+        r.incident, asset=r.name, fail_on=config.gate.fail_on, gate_failed=failed
+    )
+    # JSON: thread main's own generated_at so the only dynamic field matches, then
+    # assert byte identity (locks key order, indent, and spacing).
+    gen = datetime.fromisoformat(data["generated_at"])
+    expected = json.dumps(
+        render_json(
+            r.incident, asset=r.name, fail_on=config.gate.fail_on,
+            gate_failed=failed, generated_at=gen,
+        ),
+        indent=2,
+    )
+    assert json_text == expected
+
+    # Cheap guard: the aggregated multi-asset shape did NOT leak into the legacy path.
+    assert "| Asset | Result |" not in md
+    assert "assets" not in data
+
+
+def test_main_multi_exit_precedence_clean_plus_errored_is_2(tmp_path):
+    _write_manifest(tmp_path / "manifest.json")
+    clean = pl.DataFrame({"country": ["UK"] * 40 + ["US"] * 40 + ["DE"] * 20})
+    clean.write_csv(tmp_path / "s.csv")
+    change_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    manifest = (tmp_path / "manifest.json").as_posix()
+    cfg = tmp_path / "dvi.toml"
+    cfg.write_text(
+        "[lineage]\n"
+        f'manifest = "{manifest}"\n'
+        "[[assets]]\n"
+        'name = "model.shop.fct_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{(tmp_path / "s.csv").as_posix()}"\n'
+        f'after = "{(tmp_path / "s.csv").as_posix()}"\n'   # clean
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n"
+        "[[assets]]\n"
+        'name = "model.shop.stg_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{(tmp_path / "missing.csv").as_posix()}"\n'   # errored
+        f'after = "{(tmp_path / "missing.csv").as_posix()}"\n'
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n",
+        encoding="utf-8")
+    out = tmp_path / "out"
+    code = main(["analyze", "--config", str(cfg), "--output-dir", str(out)])
+    assert code == 2                       # clean + errored → 2
+    data = json.loads((out / "dvi-report.json").read_text(encoding="utf-8"))
+    assert data["gate"]["failed"] is False
+    errored = [a for a in data["assets"] if a["error"] is not None]
+    assert errored and errored[0]["asset"] == "model.shop.stg_orders"
+
+
+def test_main_multi_exit_precedence_gatetrip_plus_errored_is_1(tmp_path):
+    # A tripped gate (exit 1) DOMINATES an errored asset (exit 2): 1 wins.
+    _write_manifest(tmp_path / "manifest.json")
+    inc_before = pl.DataFrame({"country": ["UK"] * 40 + ["US"] * 40 + ["DE"] * 20})
+    inc_after = pl.DataFrame({"country": ["GB"] * 40 + ["US"] * 40 + ["DE"] * 20})
+    inc_before.write_csv(tmp_path / "a_b.csv")
+    inc_after.write_csv(tmp_path / "a_a.csv")
+    change_ts = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    manifest = (tmp_path / "manifest.json").as_posix()
+    cfg = tmp_path / "dvi.toml"
+    cfg.write_text(
+        "[lineage]\n"
+        f'manifest = "{manifest}"\n'
+        "[[assets]]\n"
+        'name = "model.shop.fct_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{(tmp_path / "a_b.csv").as_posix()}"\n'
+        f'after = "{(tmp_path / "a_a.csv").as_posix()}"\n'   # incident → trips gate
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n"
+        "[[assets]]\n"
+        'name = "model.shop.stg_orders"\n'
+        'columns = ["country"]\n'
+        "[assets.source]\n"
+        'kind = "file"\n'
+        f'before = "{(tmp_path / "missing.csv").as_posix()}"\n'   # errored
+        f'after = "{(tmp_path / "missing.csv").as_posix()}"\n'
+        "[[assets.changes]]\n"
+        'id = "pr-1"\n'
+        'targets = ["model.shop.stg_orders"]\n'
+        f"timestamp = {change_ts}\n",
+        encoding="utf-8")
+    out = tmp_path / "out"
+    code = main(["analyze", "--config", str(cfg), "--output-dir", str(out)])
+    assert code == 1                       # gate-trip dominates the errored asset
+    data = json.loads((out / "dvi-report.json").read_text(encoding="utf-8"))
+    assert data["gate"]["failed"] is True
+    by_name = {a["asset"]: a for a in data["assets"]}
+    assert set(by_name) == {"model.shop.fct_orders", "model.shop.stg_orders"}
+    assert by_name["model.shop.stg_orders"]["error"] is not None
+    assert by_name["model.shop.fct_orders"]["error"] is None
+    assert by_name["model.shop.fct_orders"]["severity"] is not None

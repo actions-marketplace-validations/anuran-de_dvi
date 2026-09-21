@@ -76,6 +76,78 @@ path = ".dvi/incidents.db"                # record incidents for cross-run histo
   Action section below); a git problem (no repo, unknown ref) is best-effort
   and simply contributes no derived events rather than failing the run.
 
+## Scanning multiple assets
+
+A `dvi.toml` runs in one of **two mutually exclusive modes**:
+
+- **Legacy single-asset** — the top-level `asset`, `source`, `changes`, and
+  `columns` keys shown above analyze exactly one asset.
+- **Multi-asset** — a list of `[[assets]]` entries, each self-contained. In this
+  mode the top-level `asset` / `source` / `changes` / `columns` keys are
+  **forbidden** (declaring both an `[[assets]]` list and any of them is a config
+  error, exit `2`). The shared sections — `[lineage]`, `[git]`, `[gate]`,
+  `[store]` — stay top-level and apply to every asset.
+
+Each `[[assets]]` entry carries its own `name` (must be unique — duplicate names
+are rejected at parse), a `[assets.source]` (`file` or `warehouse`, same shape
+as the legacy `[source]`), optional `columns`, and optional
+`[[assets.changes]]`:
+
+```toml
+[lineage]
+manifest = "target/manifest.json"
+
+[gate]
+fail_on = "high"
+
+[[assets]]
+name = "model.shop.fct_orders"
+columns = ["country"]
+[assets.source]
+kind = "file"
+before = "before/fct_orders.parquet"
+after = "after/fct_orders.parquet"
+[[assets.changes]]
+id = "pr-42"
+targets = ["model.shop.stg_orders"]
+timestamp = 2026-09-10T09:00:00
+
+[[assets]]
+name = "model.shop.dim_customer"
+columns = ["segment"]
+[assets.source]
+kind = "file"
+before = "before/dim_customer.parquet"
+after = "after/dim_customer.parquet"
+```
+
+Assets are analyzed in deterministic **sorted-by-name** order, and the run emits
+a single aggregated report.
+
+**Aggregated JSON** (multi-asset) has the shape:
+
+```json
+{
+  "assets": [
+    {"asset": "...", "severity": "high", "incident": { ... }, "error": null},
+    {"asset": "...", "severity": null, "incident": null, "error": "..."}
+  ],
+  "gate": {"fail_on": "high", "failed": true, "worst_severity": "high"},
+  "generated_at": "..."
+}
+```
+
+Each entry mirrors a single-asset `incident` block and adds a per-asset `error`
+(the could-not-run message, or `null`). The legacy single-asset JSON is
+unchanged: `{asset, severity, incident, gate: {fail_on, failed}, generated_at}`
+(no `assets` array, no `worst_severity`).
+
+**Aggregated Markdown** keeps the `<!-- dvi-report -->` marker on line 1 (so the
+sticky-comment update step is unchanged), followed by a summary table of every
+asset and its result, the shared gate line, then a per-asset drill-down section.
+An asset that could not run is shown as `⚠️ ERRORED` with its message rather than
+aborting the whole run.
+
 ## Run
 
 ```bash
@@ -91,11 +163,22 @@ exits:
 | `1`  | Incident at/above `fail_on` — the gate tripped. |
 | `2`  | Could not run (bad config, missing input, unresolved target). |
 
+For a multi-asset run, one gate reads the **worst severity** across all assets,
+and the process exit code follows the precedence **`1` > `2` > `0`**: a tripped
+gate (`1`) wins over any errored asset (`2`), which in turn wins over a clean run
+(`0`). So a run where one asset trips the gate and another could not run exits
+`1`; a run with no gate trip but one errored asset exits `2`. In the legacy
+single-asset mode, an asset that cannot run still surfaces as exit `2` exactly as
+before.
+
 CI can inject PR-specific paths without rewriting the config:
 
 ```bash
 dvi analyze --config dvi.toml --source-before prod.parquet --source-after pr.parquet
 ```
+
+The `--source-before` / `--source-after` overrides apply only to a single-asset
+file config; using them with an `[[assets]]` list is an error.
 
 ## GitHub Action
 

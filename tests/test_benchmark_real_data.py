@@ -9,11 +9,11 @@ Two experiments the synthetic suite cannot run:
   planted into a real sample must be recovered despite real-world sampling noise.
 """
 
+from dvi.benchmark._sampling import two_sample_splits
 from dvi.benchmark.real_data import (
-    injected_recall_report,
+    diamonds_injected_recall_report,
+    diamonds_real_vs_real_report,
     load_diamonds,
-    real_vs_real_report,
-    two_sample_splits,
 )
 
 
@@ -37,7 +37,7 @@ def test_two_sample_splits_are_disjoint_and_sized():
 
 def test_real_vs_real_produces_no_false_positives_at_scale():
     df = load_diamonds()
-    report = real_vs_real_report(
+    report = diamonds_real_vs_real_report(
         df,
         columns=["cut", "color", "clarity", "carat", "depth", "table", "price"],
         n=1000,
@@ -51,7 +51,7 @@ def test_real_vs_real_produces_no_false_positives_at_scale():
 
 def test_injected_substitution_is_recovered_on_real_data():
     df = load_diamonds()
-    report = injected_recall_report(
+    report = diamonds_injected_recall_report(
         df,
         column="clarity",
         from_value="SI1",

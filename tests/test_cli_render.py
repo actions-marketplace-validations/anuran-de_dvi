@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
-from dvi.cli.render import render_json, render_markdown
+from dvi.cli.render import render_json, render_markdown, render_multi_json, render_multi_markdown
+from dvi.cli.sources import AssetResult
 from dvi.incidents import BusinessImpact, Incident
 from dvi.lineage import Criticality, Exposure
 from dvi.rca import ChangeEvent, RootCauseCandidate
@@ -105,3 +106,52 @@ def test_json_no_incident_is_null():
     assert js["incident"] is None
     assert js["severity"] is None
     assert js["gate"]["failed"] is False
+
+
+def test_multi_markdown_marker_first_and_summary_rows():
+    results = [
+        AssetResult("model.a", _incident(), None),
+        AssetResult("model.b", None, None),
+        AssetResult("model.c", None, "warehouse database not found: x.duckdb"),
+    ]
+    md = render_multi_markdown(results, fail_on="high", gate_failed=True)
+    assert md.splitlines()[0] == "<!-- dvi-report -->"
+    assert "| Asset | Result |" in md
+    assert "`model.a`" in md and "High" in md
+    assert "`model.b`" in md and "clean" in md
+    assert "ERRORED" in md and "x.duckdb" in md
+    assert "## model.a" in md          # drill-down heading
+    assert "FAILED" in md              # gate line present
+
+
+def test_multi_markdown_summary_cell_sanitizes_pipes_and_newlines():
+    # A multi-line error containing a pipe must not break the summary table row.
+    results = [
+        AssetResult("model.a", None, "boom | line1\nmore | line2"),
+    ]
+    md = render_multi_markdown(results, fail_on="high", gate_failed=True)
+    lines = md.splitlines()
+    summary_rows = [ln for ln in lines if ln.startswith("| `model.a`")]
+    assert len(summary_rows) == 1
+    row = summary_rows[0]
+    assert "\n" not in row
+    assert r"\|" in row              # raw pipe escaped
+    # the only unescaped pipes are the three cell delimiters
+    assert row.replace(r"\|", "").count("|") == 3
+
+
+def test_multi_json_sorted_assets_and_worst_severity():
+    results = [
+        AssetResult("model.a", _incident(), None),
+        AssetResult("model.b", None, "boom"),
+    ]
+    js = render_multi_json(results, fail_on="high", gate_failed=True,
+                           worst_severity="high",
+                           generated_at=datetime(2026, 8, 30, tzinfo=UTC))
+    assert [a["asset"] for a in js["assets"]] == ["model.a", "model.b"]
+    assert js["assets"][0]["incident"] is not None
+    assert js["assets"][0]["severity"] == "high"
+    assert js["assets"][1]["error"] == "boom"
+    assert js["assets"][1]["incident"] is None
+    assert js["gate"]["worst_severity"] == "high"
+    assert js["gate"]["failed"] is True

@@ -5,11 +5,46 @@ All notable changes to DVI are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- Case/format detector no longer abstains on a boundary-category jitter (#32).
+  `detect_case_format_normalization` bailed whenever the significant normalized
+  category set differed between two samples; a low-share category sitting on the
+  3% relevance floor (diamonds `cut` "Fair", 2.98%) jittered across it between
+  disjoint real draws and read as a category-set change. It now abstains only on
+  a category significant on one side and entirely absent on the other (a genuine
+  new/removed category). Specificity is byte-identical; diamonds case-format
+  recall recovers from 0.433 to 1.000, lifting the pooled real-data recall from
+  0.960 to 0.998. `inject_case_format` also gains an optional `category` argument
+  (re-case a single existing category, per the spec's wording); the diamonds
+  `cut` recipe now uses it, and it raises if that category is absent rather than
+  silently returning the frame unchanged.
+
+### Changed
+- Benchmark internals cleanup (#33, #34): `two_sample_splits` now lives in one
+  place (`dvi.benchmark._sampling`) instead of being duplicated verbatim across
+  `real_data` and `real_eval.experiments`. The legacy diamonds-only helpers were
+  renamed to end the name collision with the generalised harness —
+  `RealFpReport`/`RealRecallReport` → `DiamondsFpReport`/`DiamondsRecallReport`,
+  `real_vs_real_report`/`injected_recall_report` →
+  `diamonds_real_vs_real_report`/`diamonds_injected_recall_report`. Behavior is
+  unchanged; the `dvi.benchmark.real_eval` API and all reported numbers are
+  identical.
+
 ### Added
+- Multi-asset scanning: one dvi.toml can declare an [[assets]] list; the run
+  emits a single aggregated report, a worst-severity gate, and one exit code
+  (gate-trip 1 > errored 2 > clean 0), with assets processed in deterministic
+  name order. Legacy single-asset configs are unchanged (byte-identical output)
+  (#12).
 - Auto-derive candidate change events from git commit history in CI, mapping
   changed dbt model files to lineage nodes; `[[changes]]` is now optional and
   is unioned with derived events (#11). Requires `actions/checkout` with
   `fetch-depth: 0`. A run with no declared or derived change now errors.
+- Real-data evaluation harness (`python -m dvi.benchmark.real_eval`): specificity
+  (real-vs-real) and injected-recall across all five detector families over
+  diamonds, adult census, and online-retail, with calibration (ECE/MCE/Brier) on
+  real data and a git-ignored NYC-taxi scale dimension. Methodology and results
+  in `docs/validation.md`; README claims qualified to match.
 
 ## [0.1.0] - 2026-09-04
 
